@@ -1,0 +1,14 @@
+[project]
+name = "vpmr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.2",
+    "pyglet==1.5.0",
+    "pyrender>=0.1.45",
+    "scipy>=1.15.0",
+    "thingi10k>=1.4.0",
+    "trimesh>=4.11.3",
+]

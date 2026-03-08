@@ -1,0 +1,4 @@
+build/
+output/
+.venv/
+data/thingi10k

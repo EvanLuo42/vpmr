@@ -1,0 +1,5 @@
+file(READ "${PTX_FILE}" PTX_CONTENT)
+string(REGEX REPLACE "\\\\" "\\\\\\\\" PTX_CONTENT "${PTX_CONTENT}")
+string(REGEX REPLACE "\"" "\\\\\"" PTX_CONTENT "${PTX_CONTENT}")
+string(REGEX REPLACE "\n" "\\\\n\"\n\"" PTX_CONTENT "${PTX_CONTENT}")
+file(WRITE "${PTX_C_FILE}" "const char ${PTX_VAR_NAME}[] = \"${PTX_CONTENT}\";\n")
