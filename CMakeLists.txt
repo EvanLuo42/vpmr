@@ -7,6 +7,7 @@ set(CMAKE_CUDA_STANDARD 17)
 
 find_package(Eigen3 REQUIRED)
 find_package(CGAL REQUIRED)
+find_package(OpenMP)
 if (NOT TARGET CGAL::CGAL_Core)
     add_library(CGAL_Core_compat INTERFACE)
     target_link_libraries(CGAL_Core_compat INTERFACE CGAL::CGAL)
@@ -65,6 +66,9 @@ target_link_libraries(vpmr_core PUBLIC
     CGAL::CGAL
     maxflow_lib
 )
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(vpmr_core PUBLIC OpenMP::OpenMP_CXX)
+endif()
 
 add_executable(vpmr
     source/main.cpp

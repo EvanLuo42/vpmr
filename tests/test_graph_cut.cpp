@@ -41,6 +41,88 @@ static PartitionResult make_simple_partition()
     return pr;
 }
 
+static PartitionResult make_two_cell_partition_with_extra(double mapped_visibility)
+{
+    PartitionResult pr;
+
+    // One mapped face with area 1, plus one extra face with smaller area 0.25.
+    pr.mesh.V.resize(6, 3);
+    pr.mesh.V << 0, 0, 0,
+                 2, 0, 0,
+                 0, 1, 0,
+                 0, 0, 1,
+                 1, 0, 1,
+                 0, 0.5, 1;
+
+    pr.mesh.F.resize(2, 3);
+    pr.mesh.F << 0, 1, 2,
+                 3, 4, 5;
+
+    pr.num_cells = 2;
+    pr.per_patch_cells.resize(2, 2);
+    pr.per_patch_cells << 0, 1,
+                         0, 1;
+
+    pr.mesh.face_mapping.resize(2);
+    pr.mesh.face_mapping << 0, -1;
+
+    pr.mesh.offset_source.resize(2);
+    pr.mesh.offset_source << -1, -1;
+
+    pr.mesh.visibility.resize(2);
+    pr.mesh.visibility << mapped_visibility, 0.0;
+
+    pr.mesh.orientation.resize(2);
+    pr.mesh.orientation << 1.0, 0.0;
+
+    return pr;
+}
+
+static PartitionResult make_three_cell_partition_with_invisible_bridge()
+{
+    PartitionResult pr;
+
+    // Cell 0 is exterior. A visible mapped face forces cell 1 interior.
+    // Cell 2 is connected to cell 1 only through an invisible mapped face,
+    // and to cell 0 through a smaller extra face. Without smoothness on the
+    // invisible mapped face, cell 2 should stay exterior.
+    pr.mesh.V.resize(9, 3);
+    pr.mesh.V << 0, 0, 0,
+                 2, 0, 0,
+                 0, 1, 0,
+                 0, 0, 1,
+                 2, 0, 1,
+                 0, 1, 1,
+                 0, 0, 2,
+                 1, 0, 2,
+                 0, 0.5, 2;
+
+    pr.mesh.F.resize(3, 3);
+    pr.mesh.F << 0, 1, 2,
+                 3, 4, 5,
+                 6, 7, 8;
+
+    pr.num_cells = 3;
+    pr.per_patch_cells.resize(3, 2);
+    pr.per_patch_cells << 0, 1,
+                         1, 2,
+                         0, 2;
+
+    pr.mesh.face_mapping.resize(3);
+    pr.mesh.face_mapping << 0, 1, -1;
+
+    pr.mesh.offset_source.resize(3);
+    pr.mesh.offset_source << -1, -1, -1;
+
+    pr.mesh.visibility.resize(3);
+    pr.mesh.visibility << 1.0, 0.0, 0.0;
+
+    pr.mesh.orientation.resize(3);
+    pr.mesh.orientation << 1.0, 1.0, 0.0;
+
+    return pr;
+}
+
 TEST(GraphCut, AllVisiblePositiveOrientation)
 {
     auto pr = make_simple_partition();
@@ -96,6 +178,35 @@ TEST(GraphCut, ExtraFacesSmoothnessOnly)
     // With only smoothness edges and cell 0 forced to exterior,
     // no data term pushes cell 1 to interior → no interface faces.
     EXPECT_EQ(result.F.rows(), 0);
+}
+
+TEST(GraphCut, VisibleFaceCanBeatSmallerExtraFace)
+{
+    auto pr = make_two_cell_partition_with_extra(0.51);
+
+    Config config;
+    Mesh result = extract_interface(pr, config);
+
+    // The visible mapped face contributes unary cost 1.0, while the extra face
+    // only contributes pairwise cost 0.25. The cut should therefore keep the
+    // cell interior and expose both separating faces.
+    EXPECT_EQ(result.F.rows(), 2);
+    EXPECT_EQ(result.face_mapping(0), 0);
+    EXPECT_EQ(result.face_mapping(1), -1);
+}
+
+TEST(GraphCut, InvisibleMappedFaceConnectsInterior)
+{
+    auto pr = make_three_cell_partition_with_invisible_bridge();
+
+    Config config;
+    Mesh result = extract_interface(pr, config);
+
+    // The invisible mapped face now adds a smoothness edge, connecting cell 2
+    // to cell 1 (interior). Since the smoothness to cell 1 (0.8) exceeds the
+    // smoothness to cell 0 (0.2), cell 2 becomes interior. The interface is:
+    //   face 0 (cell0-cell1, visible mapped) + face 2 (cell0-cell2, extra).
+    EXPECT_EQ(result.F.rows(), 2);
 }
 
 TEST(GraphCut, FaceMappingPreserved)

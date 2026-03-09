@@ -3,7 +3,7 @@
 #include "vpmr/types.h"
 #include <CGAL/Exact_predicates_exact_constructions_kernel.h>
 #include <array>
-#include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace vpmr {
@@ -68,9 +68,13 @@ public:
     // A representative point inside the convex cell, approximated by averaging its vertices.
     Eigen::Vector3d cell_representative(int cell_id) const;
 
+    // Add a new vertex (exact + double mirror)
+    int add_vertex(const EPoint3 &p);
+
 private:
     // Split cell along plane. Returns (pos_cell_id, neg_cell_id) or (-1,-1) if no split.
-    std::pair<int, int> split_cell(int cell_id, const EPlane3 &plane, int face_label);
+    std::pair<int, int> split_cell(int cell_id, const EPlane3 &plane,
+                                   const double plane_d[4], int face_label);
 
     // Find all cells that triangle (v0,v1,v2) intersects
     std::vector<int> find_intersecting_cells(int v0, int v1, int v2);
@@ -81,8 +85,8 @@ private:
     // Order vertices of a convex polygon on a plane in CCW order (from positive side)
     void order_polygon_ccw(std::vector<int> &poly, const EPlane3 &plane);
 
-    // Walk from a hint cell to find cell containing a point
-    int walk_to_point(const EPoint3 &p, int hint) const;
+    // Walk from a hint cell to find cell containing a point (double-precision)
+    int walk_to_point_double(double px, double py, double pz, int hint) const;
 
     // Get or compute the AABB for a cell (caches result in BSPCell::bbox)
     DAABB compute_cell_bbox(int cell_id);
@@ -90,11 +94,25 @@ private:
     // Get or compute the cached plane for a face
     const EPlane3 &get_face_plane(BSPFace &f);
 
-    // Add a new vertex (exact + double mirror)
-    int add_vertex(const EPoint3 &p);
+    // Double-precision sign test for vertex against plane.
+    // Returns true if the sign is determined (stored in out_sign), false if uncertain.
+    static bool fast_orient(const double *v, const double plane[4], CGAL::Sign &out_sign);
+
+    // Get vertex sign against current query plane, using double pre-filter + exact fallback.
+    // Uses query_vertex_stamp/query_vertex_sign as cache.
+    CGAL::Sign get_vertex_sign(int v, const EPlane3 &plane, const double plane_d[4], int query_id);
+
+    // Ensure query arrays are large enough
+    void ensure_query_arrays(int min_size);
 
     // Cache for edge-plane intersections (to avoid duplicates)
-    std::map<std::pair<std::pair<int,int>, int>, int> edge_plane_cache;
+    struct PairHash {
+        size_t operator()(const std::pair<int,int> &p) const {
+            return std::hash<long long>()(((long long)p.first << 32) | (unsigned)p.second);
+        }
+    };
+    std::unordered_map<std::pair<int,int>, int, PairHash> edge_plane_cache;
+
     int current_face_id = -1; // for cache keying by insertion round
     int last_split_cell = 0;  // hint for point location
     std::vector<int> query_vertex_stamp;

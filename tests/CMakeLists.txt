@@ -19,6 +19,7 @@ add_executable(vpmr_tests
     test_bsp.cpp
     test_partition.cpp
     test_graph_cut.cpp
+    test_graph_cut_diagnostic.cpp
     test_simplification.cpp
     test_topology.cpp
     test_attributes.cpp
