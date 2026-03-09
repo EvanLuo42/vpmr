@@ -78,7 +78,7 @@ PartitionResult partition_space(const Mesh& mesh, int original_face_count)
                           << std::flush;
             }
         }
-        std::cout << std::endl;
+        std::cout << std::defaultfloat << std::setprecision(6) << std::endl;
     }
     std::cout << "[Partition]   BSP: " << bsp.cells.size() << " cells, "
               << bsp.vertices.size() << " vertices after face insertion" << std::endl;

@@ -38,12 +38,17 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     // Cell 0 is unbounded -> forced to SINK (exterior)
     graph.add_tweights(0, 0, 1e20);
 
-    // First pass: compute total data and smoothness areas to balance weights.
-    // Without balancing, smoothness from extra faces (which vastly outnumber
-    // mapped faces after BSP subdivision) overwhelms the data terms, causing
-    // the graph cut to classify almost all cells as exterior.
+    // First pass: compute total data and effective smoothness areas.
+    //
+    // All faces contribute smoothness (pairwise) to keep the graph fully
+    // connected.  Smoothness is weighted by (1 - vis) so that visible faces
+    // have near-zero smoothness cost (the cut naturally goes through them)
+    // while extra/invisible faces have high smoothness cost (the cut avoids
+    // them, keeping the interior coherent).
+    //
+    // Only visible mapped faces additionally contribute data (unary).
     double total_data_area = 0;
-    double total_smooth_area = 0;
+    double total_smooth_area = 0; // effective: (1-vis)-weighted
     for (int f = 0; f < nf; ++f)
     {
         int lc = ppc(f, 0);
@@ -54,22 +59,25 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
             continue;
 
         double area = mesh.face_area(f);
+        if (area < 1e-15)
+            continue;
         const bool is_mapped = mesh.face_mapping(f) >= 0;
         const double vis = (is_mapped && mesh.visibility.size() > 0) ? mesh.visibility(f) : 0.0;
         const bool is_visible = is_mapped && vis > 0.5;
 
         if (is_visible)
             total_data_area += area;
-        else if (area > 1e-15)
-            total_smooth_area += area;
+        // Smoothness weight: (1-vis) for mapped, 1 for extra
+        double smooth_w = is_mapped ? (1.0 - vis) : 1.0;
+        total_smooth_area += smooth_w * area;
     }
 
-    // Lambda balances data vs smoothness so that their total influence is
-    // comparable. When smooth >> data (typical after BSP), lambda < 1 prevents
-    // the smoothness from collapsing all cells to exterior.
+    // Lambda balances data vs effective smoothness.  The 0.8 factor gives
+    // the data term a slight edge so that ties break toward interior,
+    // preventing cells with visible faces from defaulting to exterior.
     double lambda = 1.0;
     if (total_smooth_area > 0 && total_data_area > 0)
-        lambda = total_data_area / total_smooth_area;
+        lambda = 0.8 * total_data_area / total_smooth_area;
 
     std::cout << "[Graph Cut]   Data area=" << total_data_area
               << " smooth area=" << total_smooth_area
@@ -111,15 +119,16 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
             }
         }
 
-        // Eq. 8: all non-visible faces contribute pairwise smoothness.
-        // This includes both extra faces (from BSP) and invisible mapped faces.
-        // Previously invisible mapped faces added no edge at all, which
-        // disconnected cells from their neighbors in the graph and caused
-        // them to default to exterior.
-        if (!is_visible && area > 1e-15)
+        // Eq. 8: ALL faces contribute pairwise smoothness, weighted by
+        // (1-vis) so visible boundaries are cheap to cut (the data term
+        // handles them) while extra/invisible boundaries are expensive
+        // (keeping interior regions coherent).
+        if (area > 1e-15)
         {
-            double w_smooth = lambda * area;
-            graph.add_edge(lc, rc, w_smooth, w_smooth);
+            double smooth_w = is_mapped ? (1.0 - vis) : 1.0;
+            double w_smooth = lambda * smooth_w * area;
+            if (w_smooth > 1e-15)
+                graph.add_edge(lc, rc, w_smooth, w_smooth);
         }
     }
 
