@@ -48,7 +48,7 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     //
     // Only visible mapped faces additionally contribute data (unary).
     double total_data_area = 0;
-    double total_smooth_area = 0; // effective: (1-vis)-weighted
+    double total_mapped_area = 0;
     for (int f = 0; f < nf; ++f)
     {
         int lc = ppc(f, 0);
@@ -67,20 +67,24 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
 
         if (is_visible)
             total_data_area += area;
-        // Smoothness weight: (1-vis) for mapped, 1 for extra
-        double smooth_w = is_mapped ? (1.0 - vis) : 1.0;
-        total_smooth_area += smooth_w * area;
+        // Use unweighted mapped face area for lambda balancing.
+        // Using (1-vis)-weighted area makes the denominator too small (most
+        // mapped faces are visible), inflating lambda.  Using all faces
+        // (including extra BSP faces) makes the denominator too large,
+        // deflating lambda.  Unweighted mapped area gives a stable middle.
+        if (is_mapped)
+            total_mapped_area += area;
     }
 
-    // Lambda balances data vs effective smoothness.  The 0.8 factor gives
-    // the data term a slight edge so that ties break toward interior,
-    // preventing cells with visible faces from defaulting to exterior.
+    // Lambda ≈ visible fraction of mapped area, scaled by 0.8.
+    // This keeps data and smoothness balanced for mapped faces while giving
+    // extra BSP faces a meaningful smoothness penalty (~lambda * area).
     double lambda = 1.0;
-    if (total_smooth_area > 0 && total_data_area > 0)
-        lambda = 0.8 * total_data_area / total_smooth_area;
+    if (total_mapped_area > 0 && total_data_area > 0)
+        lambda = 0.8 * total_data_area / total_mapped_area;
 
     std::cout << "[Graph Cut]   Data area=" << total_data_area
-              << " smooth area=" << total_smooth_area
+              << " mapped area=" << total_mapped_area
               << " lambda=" << lambda << std::endl;
 
     // Second pass: build the graph.

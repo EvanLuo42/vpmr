@@ -98,9 +98,9 @@ Mesh run_pipeline(Mesh input, const Config& config)
     }
 
     // §3.6: Constrained simplification
-    std::cout << "[VPMR] Simplifying mesh..." << std::endl;
+    std::cout << "[Simplification] Simplifying mesh..." << std::endl;
     simplify_mesh(result, config);
-    std::cout << "[VPMR]   Simplified faces: " << result.F.rows() << std::endl;
+    std::cout << "[Simplification]   Simplified faces: " << result.F.rows() << std::endl;
 
     // Fill any remaining boundary holes before topology fixing
     {
@@ -145,21 +145,21 @@ Mesh run_pipeline(Mesh input, const Config& config)
                 result.F = newF;
                 result.face_mapping = newFM;
                 result.offset_source = newOS;
-                std::cout << "[VPMR]   Filled " << loops.size() << " boundary loops (" << added << " faces)" << std::endl;
+                std::cout << "[Simplification]   Filled " << loops.size() << " boundary loops (" << added << " faces)" << std::endl;
             }
         }
     }
 
     // §3.7: Topological correction
-    std::cout << "[VPMR] Fixing topology..." << std::endl;
+    std::cout << "[Topology Fix] Fixing topology..." << std::endl;
     fix_topology(result);
-    std::cout << "[VPMR]   Faces after topology fix: " << result.F.rows() << std::endl;
+    std::cout << "[Topology Fix]   Faces after topology fix: " << result.F.rows() << std::endl;
 
     // §3.8: Attribute recovery
-    std::cout << "[VPMR] Recovering attributes..." << std::endl;
+    std::cout << "[Attribute Recovery] Recovering attributes..." << std::endl;
     recover_attributes(result, input_copy);
 
-    std::cout << "[VPMR] Done. Output: " << result.V.rows() << " vertices, " << result.F.rows() << " faces." << std::endl;
+    std::cout << "Done. Output: " << result.V.rows() << " vertices, " << result.F.rows() << " faces." << std::endl;
 
     return result;
 }
