@@ -2,3 +2,6 @@ build/
 output/
 .venv/
 data/thingi10k
+__pycache__/
+.idea
+.claude

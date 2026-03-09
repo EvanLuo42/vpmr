@@ -62,13 +62,13 @@ TEST(GraphCut, InterfaceFaceOrientation)
 
     Mesh result = extract_interface(pr, config);
 
-    // ppc(f,0) = cell 0 = exterior → lc_interior = false → faces get flipped
-    // to orient normals outward (from interior to exterior)
+    // ppc(f,0) = cell 0 = exterior → lc_interior = false → normal already
+    // points outward (toward exterior) → faces keep original winding
     for (int f = 0; f < result.F.rows(); ++f)
     {
         EXPECT_EQ(result.F(f, 0), pr.mesh.F(f, 0));
-        EXPECT_EQ(result.F(f, 1), pr.mesh.F(f, 2)); // flipped
-        EXPECT_EQ(result.F(f, 2), pr.mesh.F(f, 1)); // flipped
+        EXPECT_EQ(result.F(f, 1), pr.mesh.F(f, 1));
+        EXPECT_EQ(result.F(f, 2), pr.mesh.F(f, 2));
     }
 }
 

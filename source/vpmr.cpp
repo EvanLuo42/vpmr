@@ -49,7 +49,7 @@ Mesh run_pipeline(Mesh input, const Config& config)
     offset_open_surfaces(mesh, config);
     std::cout << "[Offset]   Faces after offset: " << mesh.F.rows() << " (original: " << original_face_count << ")" << std::endl;
 
-    // §3.4: Space partition (BSP tree on Delaunay tetrahedralization)
+    // §3.4: Space partition (resolve self-intersections + extract cells)
     std::cout << "[Partition] Partitioning space..." << std::endl;
     auto partition = partition_space(mesh, original_face_count);
     std::cout << "[Partition]   Partition faces: " << partition.mesh.F.rows() << ", cells: " << partition.num_cells << std::endl;

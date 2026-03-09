@@ -15,65 +15,17 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     // ppc(f, 0) = positive cell (normal side), ppc(f, 1) = negative cell
     const MatXi& ppc = partition.per_patch_cells;
 
-    // Classify faces:
-    // VISIBLE: mapped to an input face and visible on M_partition
-    // INVISIBLE: mapped to an input face and invisible on M_partition
-    // EXTRA: no strict mapping M(f)
-    enum FaceClass
-    {
-        VISIBLE,
-        INVISIBLE,
-        EXTRA
-    };
-    std::vector<FaceClass> face_class(nf);
-
-    int vis_count = 0, invis_count = 0, extra_count = 0;
+    // Diagnostics
+    int mapped_count = 0, extra_count = 0;
     for (int f = 0; f < nf; ++f)
     {
         if (mesh.face_mapping(f) >= 0)
-        {
-            if (mesh.visibility(f) > 0.5)
-            {
-                face_class[f] = VISIBLE;
-                ++vis_count;
-            }
-            else
-            {
-                face_class[f] = INVISIBLE;
-                ++invis_count;
-            }
-        }
+            ++mapped_count;
         else
-        {
-            face_class[f] = EXTRA;
             ++extra_count;
-        }
     }
-
-    // Diagnostics
-    int skipped_faces = 0;
-    std::vector<int> lc_hist(num_cells, 0), rc_hist(num_cells, 0);
-    int same_cell_count = 0;
-    for (int f = 0; f < nf; ++f)
-    {
-        int lc = ppc(f, 0);
-        int rc = ppc(f, 1);
-        if (lc < 0 || rc < 0 || lc >= num_cells || rc >= num_cells)
-        {
-            ++skipped_faces;
-            continue;
-        }
-        lc_hist[lc]++;
-        rc_hist[rc]++;
-        if (lc == rc) ++same_cell_count;
-    }
-
-    std::cout << "[Graph Cut]   Classification: visible=" << vis_count << " invisible=" << invis_count << " extra=" << extra_count
-              << " skipped=" << skipped_faces << " same_cell=" << same_cell_count << std::endl;
-    for (int c = 0; c < std::min(num_cells, 10); ++c)
-    {
-        std::cout << "[Graph Cut]   ppc hist cell " << c << ": lc=" << lc_hist[c] << " rc=" << rc_hist[c] << std::endl;
-    }
+    std::cout << "[Graph Cut]   Classification: mapped=" << mapped_count
+              << " extra=" << extra_count << std::endl;
 
     // Build graph: cells are nodes, cell 0 = unbounded = SINK
     maxflow::Graph_DDD graph(num_cells, nf);
@@ -86,10 +38,6 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     // Cell 0 is unbounded -> forced to SINK (exterior)
     graph.add_tweights(0, 0, 1e20);
 
-    // Track per-cell source/sink weights for diagnostics
-    std::vector<double> cell_source(num_cells, 0), cell_sink(num_cells, 0);
-    cell_sink[0] += 1e20;
-
     for (int f = 0; f < nf; ++f)
     {
         int lc = ppc(f, 0);
@@ -100,42 +48,39 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
         if (lc == rc)
             continue; // same cell on both sides — no cut possible
 
-        double w = mesh.face_area(f);
+        double area = mesh.face_area(f);
 
-        if (face_class[f] == VISIBLE)
+        // Per-face visibility (0 for extra faces with no mapping)
+        double vis = 0.0;
+        if (mesh.face_mapping(f) >= 0 && mesh.visibility.size() > 0)
+            vis = mesh.visibility(f);
+
+        // Data term (Eq. 7): visibility-weighted unary based on orientation.
+        // Orientation determines which side of the face is interior/exterior.
+        // orientation > 0: normal points outward → lc is exterior, rc is interior
+        // orientation < 0: normal points inward  → lc is interior, rc is exterior
+        if (vis > 0)
         {
-            // Data term (Eq. 7): use orientation to determine normal direction.
-            // orientation > 0: normal points outward → lc is exterior, rc is interior
-            // orientation < 0: normal points inward  → lc is interior, rc is exterior
+            double w_data = area * vis;
             if (mesh.orientation(f) >= 0)
             {
-                graph.add_tweights(lc, 0, w); // lc → SINK (exterior)
-                graph.add_tweights(rc, w, 0); // rc → SOURCE (interior)
-                cell_sink[lc] += w;
-                cell_source[rc] += w;
+                graph.add_tweights(lc, 0, w_data); // lc → SINK (exterior)
+                graph.add_tweights(rc, w_data, 0);  // rc → SOURCE (interior)
             }
             else
             {
-                graph.add_tweights(lc, w, 0); // lc → SOURCE (interior)
-                graph.add_tweights(rc, 0, w); // rc → SINK (exterior)
-                cell_source[lc] += w;
-                cell_sink[rc] += w;
+                graph.add_tweights(lc, w_data, 0); // lc → SOURCE (interior)
+                graph.add_tweights(rc, 0, w_data);  // rc → SINK (exterior)
             }
         }
-        else
-        {
-            // Smoothness term (Eq. 8): invisible and extra faces get edges
-            // to connect adjacent cells and ensure smooth labeling propagation.
-            graph.add_edge(lc, rc, w, w);
-        }
-    }
 
-    // Debug: print per-cell weights
-    for (int c = 0; c < std::min(num_cells, 10); ++c)
-    {
-        std::cout << "[Graph Cut]   Cell " << c << ": source=" << cell_source[c]
-                  << " sink=" << cell_sink[c]
-                  << " net=" << (cell_source[c] - cell_sink[c]) << std::endl;
+        // Smoothness term (Eq. 8): (1-visibility)-weighted pairwise edge.
+        // Penalizes labeling adjacent cells differently through non-visible faces.
+        double w_smooth = area * (1.0 - vis);
+        if (w_smooth > 1e-15)
+        {
+            graph.add_edge(lc, rc, w_smooth, w_smooth);
+        }
     }
 
     graph.maxflow();
@@ -176,13 +121,9 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     for (int f : interface_faces)
     {
         if (mesh.face_mapping(f) >= 0)
-        {
             ++iface_mapped;
-        }
         else
-        {
             ++iface_extra;
-        }
     }
     std::cout << "[Graph Cut]   Interface faces: " << interface_faces.size() << " (mapped=" << iface_mapped << " extra=" << iface_extra
               << ")" << std::endl;
