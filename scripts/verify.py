@@ -14,22 +14,25 @@ Usage:
 
 import argparse
 import math
+import os
 import sys
 import warnings
 from collections import defaultdict, deque
+from pathlib import Path
 
 import numpy as np
 
 warnings.filterwarnings("ignore")
 
 
-def load_mesh(path: str):
+def load_mesh(path: str, merge=False):
     import trimesh
 
     mesh = trimesh.load(path, process=False, force="mesh")
-    # Weld coincident vertices so topology checks are meaningful
-    # (STL triangle soup has 3 unique verts per face with no sharing)
-    mesh.merge_vertices()
+    if merge:
+        # Weld coincident vertices so topology checks are meaningful
+        # (STL triangle soup has 3 unique verts per face with no sharing)
+        mesh.merge_vertices()
     return mesh
 
 
@@ -454,12 +457,14 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading meshes...")
-    mesh_in = load_mesh(args.input_mesh)
+    mesh_in_raw = load_mesh(args.input_mesh)
+    mesh_in = load_mesh(args.input_mesh, merge=True)
     mesh_out = load_mesh(args.output_mesh)
 
     # --- Mesh info ---
     print("\n=== Mesh Info ===")
-    mesh_info(mesh_in, "Input")
+    mesh_info(mesh_in_raw, "Input (raw)")
+    mesh_info(mesh_in, "Input (merged)")
     mesh_info(mesh_out, "Output")
 
     # --- Watertight / Manifold ---
@@ -478,17 +483,17 @@ def main():
     # --- Hausdorff Distance ---
     print("\n=== Metrics ===")
     print(f"  Computing Hausdorff distance ({args.samples} samples)...")
-    hd = hausdorff_distance(mesh_in, mesh_out, args.samples, seed=args.seed)
+    hd = hausdorff_distance(mesh_in_raw, mesh_out, args.samples, seed=args.seed)
     print(f"  HD:   {hd}")
 
     # --- Render views ---
     print(f"  Rendering {args.views} views at {args.resolution}x{args.resolution}...")
     cam_positions = _camera_positions(args.views)
-    render_center, render_scale = _shared_render_frame(mesh_in, mesh_out)
+    render_center, render_scale = _shared_render_frame(mesh_in_raw, mesh_out)
 
     # LFD: both meshes rendered single-sided (front_only) so holes affect silhouette
     lfd_images_in = _render_views(
-        mesh_in, cam_positions, render_center, render_scale,
+        mesh_in_raw, cam_positions, render_center, render_scale,
         args.resolution, render_mode="front_only",
     )
     lfd_images_out = _render_views(
@@ -500,7 +505,7 @@ def main():
 
     # PSNR: input double-face (reference), output front white + back black
     psnr_images_in = _render_views(
-        mesh_in, cam_positions, render_center, render_scale,
+        mesh_in_raw, cam_positions, render_center, render_scale,
         args.resolution, render_mode="reference",
     )
     psnr_images_out = _render_views(
@@ -509,6 +514,15 @@ def main():
     )
     psnr = compute_psnr(psnr_images_in, psnr_images_out)
     print(f"  PSNR: {psnr}")
+
+    # Save PSNR view images to same directory as output mesh
+    out_dir = Path(args.output_mesh).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    from PIL import Image
+    for i, (img_in, img_out) in enumerate(zip(psnr_images_in, psnr_images_out)):
+        Image.fromarray(img_in.astype(np.uint8)).save(out_dir / f"view_{i:02d}_input.png")
+        Image.fromarray(img_out.astype(np.uint8)).save(out_dir / f"view_{i:02d}_output.png")
+    print(f"  Saved {len(psnr_images_in)} view pairs to {out_dir}/")
 
     print("\nDone.")
 

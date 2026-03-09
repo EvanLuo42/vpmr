@@ -49,7 +49,7 @@ Mesh run_pipeline(Mesh input, const Config& config)
     offset_open_surfaces(mesh, config);
     std::cout << "[Offset]   Faces after offset: " << mesh.F.rows() << " (original: " << original_face_count << ")" << std::endl;
 
-    // §3.4: Space partition
+    // §3.4: Space partition (BSP tree on Delaunay tetrahedralization)
     std::cout << "[Partition] Partitioning space..." << std::endl;
     auto partition = partition_space(mesh, original_face_count);
     std::cout << "[Partition]   Partition faces: " << partition.mesh.F.rows() << ", cells: " << partition.num_cells << std::endl;
@@ -57,69 +57,30 @@ Mesh run_pipeline(Mesh input, const Config& config)
     Mesh result;
     if (partition.num_cells >= 2)
     {
-        // §3.5.1-3.5.2: propagate visual measures from pre-partition mesh
-        // to partition faces via face_mapping
-        {
-            int nf_part = partition.mesh.F.rows();
-            partition.mesh.visibility.setZero(nf_part);
-            partition.mesh.orientation.setZero(nf_part);
-            partition.mesh.openness.setZero(nf_part);
+        // §3.5.1: Recompute visual measures on partition mesh
+        std::cout << "[Visual Measures] Recomputing on partition mesh..." << std::endl;
+        compute_visual_measures(partition.mesh, mesh, config);
 
-            int nf_src = (int)mesh.visibility.size();
-            int sign_flips = 0;
-            for (int f = 0; f < nf_part; ++f)
-            {
-                int orig = partition.mesh.face_mapping(f);
-                if (orig >= 0 && orig < nf_src)
-                {
-                    partition.mesh.visibility(f) = mesh.visibility(orig);
-                    if (orig < mesh.openness.size())
-                        partition.mesh.openness(f) = mesh.openness(orig);
+        // §3.5.2: Re-orient patches on partition mesh
+        std::cout << "[Orientation] Re-adjusting orientation on partition mesh..." << std::endl;
+        adjust_orientation(partition.mesh, &partition.per_patch_cells);
 
-                    // Compare partition face normal with original face normal
-                    // to determine correct orientation sign for graph cut.
-                    // extract_cells: ppc(f,0) = cell on positive (normal) side
-                    Vec3d part_n = partition.mesh.face_normal(f);
-                    Vec3d orig_n = mesh.face_normal(orig);
-                    double dot = part_n.dot(orig_n);
-                    double sign = (dot >= 0) ? 1.0 : -1.0;
-                    partition.mesh.orientation(f) = sign * std::abs(mesh.orientation(orig));
-                    if (sign < 0)
-                        ++sign_flips;
-                }
-            }
-
-            int mapped = 0, extra = 0;
-            for (int f = 0; f < nf_part; ++f)
-            {
-                if (partition.mesh.face_mapping(f) >= 0)
-                    ++mapped;
-                else
-                    ++extra;
-            }
-            std::cout << "[Partition]   Propagated visual measures: " << mapped << " mapped, " << extra << " extra"
-                      << ", " << sign_flips << " orientation flips" << std::endl;
-        }
-
-        // §3.5: Graph cut + interface extraction
+        // §3.5.3: Graph cut + interface extraction
         std::cout << "[Graph Cut] Extracting interface mesh..." << std::endl;
         result = extract_interface(partition, config);
         std::cout << "[Graph Cut]   Interface faces: " << result.F.rows() << std::endl;
 
         // If graph cut produced empty result, fall back to pre-partition mesh
-        // (oriented + hole-filled, before self-intersection resolution)
         if (result.F.rows() == 0)
         {
             std::cout << "[Graph Cut]   Graph cut produced empty result, using pre-partition mesh" << std::endl;
             result.V = mesh.V;
             result.F = mesh.F;
 
-            // Set face_mapping: original faces map to themselves, offset/hole-fill faces are extra
             result.face_mapping.resize(mesh.F.rows());
             for (int f = 0; f < mesh.F.rows(); ++f)
                 result.face_mapping(f) = (f < original_face_count) ? f : -1;
 
-            // Copy offset_source from the pre-partition mesh
             if (mesh.offset_source.size() == mesh.F.rows())
                 result.offset_source = mesh.offset_source;
             else
@@ -149,39 +110,43 @@ Mesh run_pipeline(Mesh input, const Config& config)
         {
             int added = 0;
             for (auto& loop : loops)
-                added += (int)loop.size() - 2;
+                if ((int)loop.size() >= 3)
+                    added += (int)loop.size() - 2;
 
-            int orig_nf = result.F.rows();
-            MatXi newF(orig_nf + added, 3);
-            newF.topRows(orig_nf) = result.F;
-
-            VecXi newFM(orig_nf + added);
-            if (result.face_mapping.size() == orig_nf)
-                newFM.head(orig_nf) = result.face_mapping;
-            else
-                newFM.head(orig_nf).setConstant(-1);
-
-            VecXi newOS(orig_nf + added);
-            if (result.offset_source.size() == orig_nf)
-                newOS.head(orig_nf) = result.offset_source;
-            else
-                newOS.head(orig_nf).setConstant(-1);
-
-            int fi = orig_nf;
-            for (auto& loop : loops)
+            if (added > 0)
             {
-                for (int i = 1; i + 1 < (int)loop.size(); ++i)
+                int orig_nf = result.F.rows();
+                MatXi newF(orig_nf + added, 3);
+                newF.topRows(orig_nf) = result.F;
+
+                VecXi newFM(orig_nf + added);
+                if (result.face_mapping.size() == orig_nf)
+                    newFM.head(orig_nf) = result.face_mapping;
+                else
+                    newFM.head(orig_nf).setConstant(-1);
+
+                VecXi newOS(orig_nf + added);
+                if (result.offset_source.size() == orig_nf)
+                    newOS.head(orig_nf) = result.offset_source;
+                else
+                    newOS.head(orig_nf).setConstant(-1);
+
+                int fi = orig_nf;
+                for (auto& loop : loops)
                 {
-                    newF.row(fi) << loop[0], loop[i + 1], loop[i];
-                    newFM(fi) = -1;
-                    newOS(fi) = -1;
-                    ++fi;
+                    for (int i = 1; i + 1 < (int)loop.size(); ++i)
+                    {
+                        newF.row(fi) << loop[0], loop[i + 1], loop[i];
+                        newFM(fi) = -1;
+                        newOS(fi) = -1;
+                        ++fi;
+                    }
                 }
+                result.F = newF;
+                result.face_mapping = newFM;
+                result.offset_source = newOS;
+                std::cout << "[VPMR]   Filled " << loops.size() << " boundary loops (" << added << " faces)" << std::endl;
             }
-            result.F = newF;
-            result.face_mapping = newFM;
-            result.offset_source = newOS;
-            std::cout << "[VPMR]   Filled " << loops.size() << " boundary loops (" << added << " faces)" << std::endl;
         }
     }
 

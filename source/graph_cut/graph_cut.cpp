@@ -1,4 +1,5 @@
 #include "graph_cut.h"
+#include <igl/remove_unreferenced.h>
 #include <maxflow.h>
 #include <iostream>
 #include <vector>
@@ -121,12 +122,12 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
                 cell_sink[rc] += w;
             }
         }
-        else if (face_class[f] == EXTRA)
+        else
         {
-            // Smoothness term (Eq. 8): only true extra faces get edges.
+            // Smoothness term (Eq. 8): invisible and extra faces get edges
+            // to connect adjacent cells and ensure smooth labeling propagation.
             graph.add_edge(lc, rc, w, w);
         }
-        // INVISIBLE faces: no edge, no data term (§3.5.3)
     }
 
     // Debug: print per-cell weights
@@ -216,6 +217,17 @@ Mesh extract_interface(const PartitionResult& partition, const Config& config)
     }
 
     result.V = mesh.V;
+
+    // Remove unreferenced vertices (partition mesh has many vertices not used by interface)
+    {
+        MatXd NV;
+        MatXi NF;
+        VecXi I;
+        igl::remove_unreferenced(result.V, result.F, NV, NF, I);
+        result.V = NV;
+        result.F = NF;
+    }
+
     return result;
 }
 

@@ -89,7 +89,11 @@ static void remove_duplicate_faces(Mesh& mesh, MatXi* per_face_cells)
 
 void adjust_orientation(Mesh& mesh, MatXi* per_face_cells)
 {
-    remove_duplicate_faces(mesh, per_face_cells);
+    // Only remove duplicate faces for the initial orientation pass (§3.2).
+    // For partition meshes (§3.5.2, per_face_cells != nullptr), duplicate faces
+    // have distinct cell adjacency and must not be removed.
+    if (per_face_cells == nullptr)
+        remove_duplicate_faces(mesh, per_face_cells);
 
     int nf = mesh.F.rows();
     if (nf == 0)
